@@ -8,10 +8,41 @@ on:
 jobs:
   build:
     runs-on: macos-13
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
-      - name: Test Environment
+
+      - name: Fetch build script
         run: |
+          git init -q dxb
+          git -C dxb fetch -q --depth 1 https://github.com/blacktop/darwin-xnu-build 663906528d1cd5ea8fde7de6f16de73db9511549
+          git -C dxb checkout -q FETCH_HEAD
+          mkdir -p dxb/patches
+          cp xnu/patches/*.patch xnu/patches/*.sh dxb/patches/ 2>/dev/null || true
+          sed -i '' 's/ARCHS="x86_64 arm64e" VALID_ARCHS="x86_64 arm64e"/ARCHS="x86_64 arm64e arm64" VALID_ARCHS="x86_64 arm64e arm64"/' dxb/build.sh || true
+
+      - name: Deps
+        run: |
+          brew install jq gum bash cmake ninja
+          printf '#!/bin/sh\nexit 0\n' | sudo tee /usr/local/bin/xcodes >/dev/null
+          sudo chmod +x /usr/local/bin/xcodes
           sw_vers
-          uname -m
+          ls -d /Applications/Xcode*.app
+          XC=$(ls -d /Applications/Xcode_*.app | sort -V | head -1)
+          echo "DEVELOPER_DIR=$XC/Contents/Developer" >> "$GITHUB_ENV"
+          sudo xcode-select -s "$XC"
           xcodebuild -version
+          xcrun --find iig
+
+      - name: Build
+        working-directory: dxb
+        env:
+          MAKEFLAGS: "-k"
+        run: bash build.sh
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: xnu-kernel
+          path: dxb/fakeroot/System/Library/Kernels/
+          if-no-files-found: warn
